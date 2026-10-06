@@ -174,7 +174,7 @@ body{margin:0;font-family:var(--f-body)}
 
 <div class="overlay" id="overlay" hidden><div class="panel" id="overlayPanel"></div></div>
 
-<script src="config.js"></script>
+<script src="config.js?v=4"></script>
 <script>
 const API=(window.DAF_CONFIG&&window.DAF_CONFIG.apiUrl||"").trim();
 const DEFAULT_CFG={classLabel:"ג 1",hebYear:"תשפ״ז",year:"2026-2027",school:"בית הספר הממלכתי הנריאטה סאלד",teacherName:"אלינור לוי",teacherPhone:"052-8496724",teacherPhoto:""};
@@ -193,8 +193,10 @@ if(hashCode)store.set("code",S.code);
 const wantAdmin=hashParts.includes("admin");
 
 /* ---------- api ---------- */
-async function apiGet(){const r=await fetch(API+"?k="+encodeURIComponent(S.code)+"&t="+Date.now());const j=await r.json();if(!j.ok)throw Object.assign(new Error(j.error),{code:j.error});return j;}
-async function apiPost(body){const r=await fetch(API,{method:"POST",body:JSON.stringify({k:S.code,...body})});const j=await r.json();if(!j.ok)throw Object.assign(new Error(j.error),{code:j.error});return j;}
+function tfetch(url,opt={}){const c=new AbortController();const t=setTimeout(()=>c.abort(),25000);return fetch(url,{...opt,signal:c.signal}).finally(()=>clearTimeout(t));}
+async function readJSON(r){const txt=await r.text();try{return JSON.parse(txt);}catch(_){throw Object.assign(new Error("no_access"),{code:"no_access"});}}
+async function apiGet(){const r=await tfetch(API+"?k="+encodeURIComponent(S.code)+"&t="+Date.now());const j=await readJSON(r);if(!j.ok)throw Object.assign(new Error(j.error),{code:j.error});return j;}
+async function apiPost(body){const r=await tfetch(API,{method:"POST",body:JSON.stringify({k:S.code,...body})});const j=await readJSON(r);if(!j.ok)throw Object.assign(new Error(j.error),{code:j.error});return j;}
 async function refresh(){const j=await apiGet();S.cfg={...DEFAULT_CFG,...j.cfg};S.kids=j.kids||[];S.kidsLoaded=true;renderAll();}
 
 /* ---------- data helpers ---------- */
@@ -463,7 +465,7 @@ function renderAll(){const c=S.cfg;$("hdrBadge").textContent=c.classLabel;$("hdr
   if(!API){note.className="notice warn";note.innerHTML="האתר עוד לא מחובר לגיליון. צריך להדביק את כתובת ה-Web app בקובץ <code class=\"inline\">config.js</code> (הוראות ב-README).";drawBoard();return;}
   if(!S.code){note.className="notice warn";note.textContent="חסר קוד כיתה בלינק. בקשו מהמחנכת את הלינק המלא.";drawBoard();return;}
   try{await refresh();note.hidden=true;}
-  catch(err){note.className="notice warn";note.textContent=err.code==="bad_code"?"הלינק לא תקין. בקשו מהמחנכת את הלינק המלא.":"לא הצלחנו לטעון את נתוני הכיתה. בדקו את החיבור ורעננו.";drawBoard();}
+  catch(err){note.className="notice warn";note.textContent=err.code==="bad_code"?"הלינק לא תקין. בקשו מהמחנכת את הלינק המלא.":err.code==="no_access"?"הטופס עוד לא פתוח לציבור. המחנכת צריכה לשנות את ההגדרה Who has access ל-Anyone ב-Apps Script.":"לא הצלחנו לטעון את נתוני הכיתה. בדקו את החיבור לאינטרנט ורעננו את הדף.";drawBoard();}
   if(wantAdmin){let pin=null;try{pin=sessionStorage.getItem("dafkesher:pin");}catch(_){}if(pin){try{await apiPost({action:"checkPin",pin});S.pin=pin;S.isAdmin=true;enterAdmin();}catch(_){}}}
   setInterval(()=>{if(!document.hidden&&S.tab!=="mine"&&$("overlay").hidden)refresh().catch(()=>{});},45000);
 })();
