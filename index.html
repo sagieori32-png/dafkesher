@@ -185,10 +185,12 @@ const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&g
 const store={get(k){try{return JSON.parse(localStorage.getItem("dafkesher:"+k));}catch(_){return null;}},set(k,v){try{localStorage.setItem("dafkesher:"+k,JSON.stringify(v));}catch(_){}}};
 
 /* ---------- link params: #k=CODE  /  #k=CODE&admin ---------- */
-const hp=new URLSearchParams(location.hash.slice(1));
-S.code=hp.get("k")||store.get("code")||"";
-if(hp.get("k"))store.set("code",S.code);
-const wantAdmin=hp.has("admin");
+const hashParts=location.hash.slice(1).split("&");
+let hashCode="";hashParts.forEach(p=>{if(p.startsWith("k=")){try{hashCode=decodeURIComponent(p.slice(2));}catch(_){hashCode=p.slice(2);}}});
+hashCode=hashCode.trim();
+S.code=hashCode||store.get("code")||"";
+if(hashCode)store.set("code",S.code);
+const wantAdmin=hashParts.includes("admin");
 
 /* ---------- api ---------- */
 async function apiGet(){const r=await fetch(API+"?k="+encodeURIComponent(S.code)+"&t="+Date.now());const j=await r.json();if(!j.ok)throw Object.assign(new Error(j.error),{code:j.error});return j;}
