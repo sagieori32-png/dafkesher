@@ -463,9 +463,12 @@ function renderAll(){const c=S.cfg;$("hdrBadge").textContent=c.classLabel;$("hdr
   const note=$("connNote");
   if(wantAdmin)setTab("admin");else setTab("mine");
   if(!API){note.className="notice warn";note.innerHTML="האתר עוד לא מחובר לגיליון. צריך להדביק את כתובת ה-Web app בקובץ <code class=\"inline\">config.js</code> (הוראות ב-README).";drawBoard();return;}
+  note.textContent="טוען את נתוני הכיתה… (בפעם הראשונה זה יכול לקחת כמה שניות)";
   if(!S.code){note.className="notice warn";note.textContent="חסר קוד כיתה בלינק. בקשו מהמחנכת את הלינק המלא.";drawBoard();return;}
   try{await refresh();note.hidden=true;}
-  catch(err){note.className="notice warn";note.textContent=err.code==="bad_code"?"הלינק לא תקין. בקשו מהמחנכת את הלינק המלא.":err.code==="no_access"?"הטופס עוד לא פתוח לציבור. המחנכת צריכה לשנות את ההגדרה Who has access ל-Anyone ב-Apps Script.":"לא הצלחנו לטעון את נתוני הכיתה. בדקו את החיבור לאינטרנט ורעננו את הדף.";drawBoard();}
+  catch(err){note.className="notice warn";note.textContent=err.code==="bad_code"?"הלינק לא תקין. בקשו מהמחנכת את הלינק המלא.":err.code==="no_access"?"הטופס עוד לא פתוח לציבור. המחנכת צריכה לשנות את ההגדרה Who has access ל-Anyone ב-Apps Script.":"לא הצלחנו לטעון את נתוני הכיתה. בדקו את החיבור לאינטרנט ורעננו את הדף.";
+    const dbg=document.createElement("div");dbg.style.cssText="font-size:12px;opacity:.75;direction:ltr;text-align:left;margin-top:6px";dbg.textContent="["+(err.code||err.name||"")+"] "+(err.message||"")+" · "+navigator.userAgent.slice(0,90);note.appendChild(dbg);
+    const rb=document.createElement("button");rb.className="btn small";rb.style.marginTop="8px";rb.textContent="נסו שוב";rb.onclick=()=>location.reload();note.appendChild(rb);drawBoard();}
   if(wantAdmin){let pin=null;try{pin=sessionStorage.getItem("dafkesher:pin");}catch(_){}if(pin){try{await apiPost({action:"checkPin",pin});S.pin=pin;S.isAdmin=true;enterAdmin();}catch(_){}}}
   setInterval(()=>{if(!document.hidden&&S.tab!=="mine"&&$("overlay").hidden)refresh().catch(()=>{});},45000);
 })();
