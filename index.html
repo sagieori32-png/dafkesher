@@ -84,6 +84,19 @@ body{margin:0;font-family:var(--f-body)}
 .share-box{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .share-box input{flex:1 1 260px;direction:ltr;text-align:left;font-size:14px}
 .login{max-width:380px}
+.cropper{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.crop-frame{position:relative;width:min(240px,100%);aspect-ratio:368/352;overflow:hidden;background:#fff;border:10px solid #fff;border-bottom-width:26px;box-shadow:0 2px 10px rgba(0,0,0,.18);touch-action:none;cursor:grab;flex:none}
+.crop-frame.empty{background:linear-gradient(#bfe0f7,#eaf5fc 60%,#9cc04a 60%,#6e9a26);cursor:default}
+.crop-frame img{position:absolute;left:0;top:0;max-width:none;user-select:none;-webkit-user-drag:none;pointer-events:none;transform-origin:0 0}
+.crop-frame .guide{position:absolute;left:50%;top:44%;width:46%;aspect-ratio:3/4;transform:translate(-50%,-50%);border:2px dashed rgba(255,255,255,.85);border-radius:50%;pointer-events:none;box-shadow:0 0 0 1px rgba(0,0,0,.15)}
+.crop-side{display:flex;flex-direction:column;gap:8px;min-width:0;flex:1 1 200px}
+.crop-side input[type=range]{width:100%}
+.roster-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px 14px}
+.roster-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;background:var(--surface-2);font-size:15px;min-width:0}
+.roster-item .dot{width:10px;height:10px;border-radius:50%;flex:none}
+.roster-item.done .dot{background:var(--ok)} .roster-item.todo .dot{background:var(--warn)}
+.roster-item.todo{background:var(--warn-bg)}
+textarea.roster-input{font:400 16px var(--f-body);color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;width:100%;min-height:200px;resize:vertical}
 .link-btn{background:none;border:0;color:var(--school);font:600 15px var(--f-body);cursor:pointer;padding:0;text-decoration:underline}
 </style>
 </head>
@@ -138,6 +151,17 @@ body{margin:0;font-family:var(--f-body)}
         <p class="lead">שולחים את הלינק הזה בקבוצת ההורים. ההורים רואים רק את טופס המילוי. את הלוח רואה רק מי שנכנס עם קוד הניהול, ובסוף מורידים אותו כתמונה ושולחים.</p>
         <div class="share-box"><input type="text" id="parentLink" readonly><button class="btn primary" id="copyLink">העתקה</button></div>
         <span class="status" id="copyStatus"></span>
+      </div>
+      <div class="panel" id="rosterPanel">
+        <div class="row" style="justify-content:space-between">
+          <div><h2>מי כבר שלח?</h2><p class="lead" id="rosterSummary">מדביקים את רשימת הילדים בכיתה, ורואים מי עוד לא מילא.</p></div>
+          <div class="row"><button class="btn" id="copyMissing" hidden>העתקת שמות שעוד לא שלחו</button><button class="btn" id="editRoster">עריכת הרשימה</button></div>
+        </div>
+        <div id="rosterView"></div>
+        <div id="rosterEdit" hidden style="display:flex;flex-direction:column;gap:10px">
+          <label class="f">שם פרטי ושם משפחה של כל ילד/ה, כל ילד/ה בשורה נפרדת<textarea class="roster-input" id="rosterInput" placeholder="נועה כהן&#10;איתי אברהם&#10;שירה לוי"></textarea></label>
+          <div class="row"><button class="btn primary" id="saveRoster">שמירת הרשימה</button><button class="btn" id="cancelRoster">ביטול</button><span class="status" id="rosterStatus"></span></div>
+        </div>
       </div>
       <div class="panel">
         <div class="row" style="justify-content:space-between">
@@ -336,6 +360,62 @@ async function drawBoard(target){
 
 async function fitPhoto(file,w,h){let q=0.82,d="";for(let i=0;i<6;i++){d=await fileToDataURL(file,w,h,q);if(d.length<45000)return d;q-=0.12;if(q<0.35){w=Math.round(w*.8);h=Math.round(h*.8);q=0.7;}}return d;}
 
+/* ---------- photo cropper with face detection ---------- */
+const OUT_W=368,OUT_H=352;
+let faceApiP=null;
+function loadFaceApi(){
+  if(faceApiP)return faceApiP;
+  const base="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/";
+  faceApiP=new Promise((res,rej)=>{const sc=document.createElement("script");sc.src=base+"dist/face-api.js";sc.onload=res;sc.onerror=rej;document.head.appendChild(sc);})
+    .then(async()=>{const tf=faceapi.tf;let ok=false;try{ok=await tf.setBackend("webgl");}catch(_){}if(!ok){try{await tf.setBackend("cpu");}catch(_){}}await tf.ready();
+      await faceapi.nets.tinyFaceDetector.loadFromUri(base+"model/");return window.faceapi;});
+  faceApiP.catch(()=>{faceApiP=null;});
+  return faceApiP;
+}
+function withTimeout(p,ms){return Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),ms))]);}
+async function detectFace(img){
+  try{const fa=await withTimeout(loadFaceApi(),12000);
+    const r=await withTimeout(fa.detectAllFaces(img,new fa.TinyFaceDetectorOptions({inputSize:416,scoreThreshold:0.35})),8000);
+    if(!r||!r.length)return null;r.sort((a,b)=>b.box.width*b.box.height-a.box.width*a.box.height);return r[0].box;}
+  catch(_){return null;}
+}
+function fileToImage(file){return new Promise((res,rej)=>{const u=URL.createObjectURL(file);const im=new Image();im.onload=()=>{
+  const max=1400,s=Math.min(1,max/Math.max(im.naturalWidth,im.naturalHeight));const c=document.createElement("canvas");c.width=Math.round(im.naturalWidth*s);c.height=Math.round(im.naturalHeight*s);
+  c.getContext("2d").drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);const o=new Image();o.onload=()=>res(o);o.onerror=rej;o.src=c.toDataURL("image/jpeg",0.92);};im.onerror=()=>{URL.revokeObjectURL(u);rej(new Error("img"));};im.src=u;});}
+function makeCropper(p,initial){
+  const frame=$(p+"frame"),el=$(p+"cimg"),zoomEl=$(p+"zoom");
+  let img=null,changed=false,z=1,ox=0,oy=0; // ox,oy: image top-left in frame units (frame width = 1)
+  const ar=OUT_H/OUT_W;
+  const base=()=>img?Math.max(1/img.naturalWidth,ar/img.naturalHeight):1; // scale so image covers frame
+  function clamp(){const s=base()*z,w=img.naturalWidth*s,h=img.naturalHeight*s;ox=Math.min(0,Math.max(1-w,ox));oy=Math.min(0,Math.max(ar-h,oy));}
+  function render(){if(!img)return;clamp();const F=frame.clientWidth||240,s=base()*z*F;el.style.width=img.naturalWidth*s+"px";el.style.height=img.naturalHeight*s+"px";el.style.transform=`translate(${ox*F}px,${oy*F}px)`;}
+  function setZoom(nz){if(!img)return;const s0=base()*z,cx=(0.5-ox)/s0,cy=(ar/2-oy)/s0;z=Math.max(1,Math.min(+zoomEl.max,nz));const s1=base()*z;ox=0.5-cx*s1;oy=ar/2-cy*s1;zoomEl.value=z;render();}
+  function useImage(im,face){img=im;el.src=im.src;frame.classList.remove("empty");$(p+"adjust").hidden=false;$(p+"guide").hidden=false;
+    z=1;ox=0;oy=0;const s0=base();
+    if(face){const want=(ar*0.52)/face.height;z=Math.max(1,want/s0);if(z>+zoomEl.max)zoomEl.max=Math.ceil(z+1);const s=s0*z;ox=0.5-(face.x+face.width/2)*s;oy=ar*0.45-(face.y+face.height/2)*s;}
+    else{const s=s0;ox=0.5-img.naturalWidth*s/2;oy=0;} // no face found: center horizontally, keep the top
+    zoomEl.value=z;requestAnimationFrame(render);}
+  if(initial){const im=new Image();im.onload=()=>{img=im;el.src=im.src;z=1;ox=0;oy=0;zoomEl.value=1;requestAnimationFrame(render);};im.src=initial;}
+  zoomEl.addEventListener("input",()=>{changed=true;setZoom(+zoomEl.value);});
+  let drag=null;
+  frame.addEventListener("pointerdown",e=>{if(!img)return;drag={x:e.clientX,y:e.clientY,ox,oy};frame.setPointerCapture(e.pointerId);frame.style.cursor="grabbing";});
+  frame.addEventListener("pointermove",e=>{if(!drag)return;const F=frame.clientWidth||240;ox=drag.ox+(e.clientX-drag.x)/F;oy=drag.oy+(e.clientY-drag.y)/F;changed=true;render();});
+  const end=()=>{drag=null;frame.style.cursor="";};frame.addEventListener("pointerup",end);frame.addEventListener("pointercancel",end);
+  frame.addEventListener("wheel",e=>{if(!img)return;e.preventDefault();changed=true;setZoom(z*(e.deltaY<0?1.06:1/1.06));},{passive:false});
+  new ResizeObserver(render).observe(frame);
+  return {
+    async loadFile(f){const im=await fileToImage(f);const note=$(p+"photoNote");note.textContent="מחפש את הפנים בתמונה…";
+      useImage(im,null);changed=true;const face=await detectFace(im);if(img!==im)return;
+      if(face){useImage(im,face);note.textContent="מיקדנו את התמונה על הפנים. אפשר לתקן בגרירה ובזום.";}
+      else note.textContent="לא זיהינו פנים אוטומטית. גררו והגדילו כדי למרכז את הפנים.";
+      note.className="status";},
+    output(){if(!img)return "";if(!changed&&initial)return initial;
+      const c=document.createElement("canvas");c.width=OUT_W;c.height=OUT_H;const x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,OUT_W,OUT_H);
+      const s=base()*z*OUT_W;x.drawImage(img,ox*OUT_W,oy*OUT_W,img.naturalWidth*s,img.naturalHeight*s);
+      let q=0.85,d=c.toDataURL("image/jpeg",q);while(d.length>45000&&q>0.3){q-=0.1;d=c.toDataURL("image/jpeg",q);}return d;}
+  };
+}
+
 /* ---------- forms ---------- */
 function kidFormHTML(p,d){
   const [f,l]=splitName(d);
@@ -352,29 +432,33 @@ function kidFormHTML(p,d){
         <label class="f">שם פרטי<input type="text" id="${p}p2n" value="${esc(d.p2Name)}"></label>
         <label class="f">טלפון<input type="tel" id="${p}p2p" value="${esc(d.p2Phone)}" inputmode="tel" placeholder="05X-XXXXXXX"></label></fieldset>
     </div>
-    <div class="photo-pick">
-      <div class="polaroid"><div class="ph" id="${p}prev" ${d.photo?`style="background-image:url('${d.photo}')"`:""}></div></div>
-      <div style="display:flex;flex-direction:column;gap:8px">
+    <div class="cropper">
+      <div class="crop-frame ${d.photo?"":"empty"}" id="${p}frame"><img id="${p}cimg" alt=""><div class="guide" id="${p}guide" hidden></div></div>
+      <div class="crop-side">
         <label class="btn" for="${p}file" style="text-align:center">${d.photo?"החלפת תמונה":"העלאת תמונה של הילד/ה"}</label>
         <input type="file" id="${p}file" accept="image/*" hidden>
-        <span class="status">תמונת פנים ברורה. התמונה מוקטנת אוטומטית.</span>
+        <div id="${p}adjust" ${d.photo?"":"hidden"} style="display:flex;flex-direction:column;gap:6px">
+          <label class="f">זום<input type="range" id="${p}zoom" min="1" max="5" step="0.01" value="1"></label>
+          <span class="status">גררו את התמונה כדי שהפנים יהיו במרכז המסגרת.</span>
+        </div>
+        <span class="status" id="${p}photoNote">${d.photo?"":"מומלץ תמונה שבה רואים את הפנים בבירור."}</span>
       </div>
     </div>
     <div class="row"><button class="btn primary" type="submit" id="${p}save">שמירה</button>${p==="e_"?`<button class="btn" type="button" id="e_cancel">ביטול</button>`:""}<span class="status" id="${p}status"></span></div>
   </form>`;
 }
 function bindKidForm(p,d,onSave){
-  let photo=d.photo||"";
-  $(p+"file").addEventListener("change",async e=>{const f=e.target.files[0];if(!f)return;const st=$(p+"status");st.className="status";st.textContent="מעבד תמונה…";
-    try{photo=await fitPhoto(f,348,318);$(p+"prev").style.backgroundImage=`url('${photo}')`;st.textContent="התמונה מוכנה. לחצו שמירה.";}
-    catch(err){st.textContent="לא הצלחנו לקרוא את הקובץ. נסו תמונה בפורמט JPG או PNG.";st.className="status err";}});
+  const crop=makeCropper(p,d.photo||"");
+  $(p+"file").addEventListener("change",async e=>{const f=e.target.files[0];if(!f)return;const note=$(p+"photoNote");note.className="status";note.textContent="מעבד את התמונה…";
+    try{await crop.loadFile(f);}
+    catch(err){note.textContent="לא הצלחנו לקרוא את הקובץ. נסו תמונה בפורמט JPG או PNG.";note.className="status err";}});
   $(p+"form").addEventListener("submit",async e=>{e.preventDefault();const st=$(p+"status");st.className="status";
     const fn=$(p+"first").value.trim(),ln=$(p+"last").value.trim();
-    const v={firstName:fn,lastName:ln,p1Name:$(p+"p1n").value.trim(),p1Phone:normPhone($(p+"p1p").value),p2Name:$(p+"p2n").value.trim(),p2Phone:normPhone($(p+"p2p").value),photo};
+    const v={firstName:fn,lastName:ln,p1Name:$(p+"p1n").value.trim(),p1Phone:normPhone($(p+"p1p").value),p2Name:$(p+"p2n").value.trim(),p2Phone:normPhone($(p+"p2p").value),photo:""};
     if(!fn||!ln){st.textContent="צריך למלא שם פרטי ושם משפחה של הילד/ה.";st.className="status err";return;}
     if(!(v.p1Name&&v.p1Phone)&&!(v.p2Name&&v.p2Phone)){st.textContent="צריך לפחות הורה אחד עם שם וטלפון.";st.className="status err";return;}
     $(p+"save").disabled=true;st.textContent="שומר…";
-    try{await onSave(v);st.textContent="נשמר. הפרטים נכנסו ללוח הכיתה.";st.className="status good";}
+    try{v.photo=crop.output();await onSave(v);st.textContent="נשמר. הפרטים נכנסו ללוח הכיתה.";st.className="status good";}
     catch(err){st.textContent=errText(err);st.className="status err";}
     finally{$(p+"save").disabled=false;}});
 }
@@ -405,10 +489,47 @@ function renderMine(){
   if(list.length)$("backThanks").onclick=()=>{S.mineMode="thanks";renderMine();};
 }
 
+/* ---------- roster ---------- */
+function normName(s){return String(s||"").replace(/[\u0591-\u05C7]/g,"").replace(/[ךםןףץ]/g,c=>({"ך":"כ","ם":"מ","ן":"נ","ף":"פ","ץ":"צ"}[c])).replace(/[^\u05D0-\u05EAa-z0-9 ]/gi," ").replace(/\s+/g," ").trim().toLowerCase();}
+function rosterNames(){const r=S.cfg.roster!=null&&S.cfg.roster!==""?S.cfg.roster:(store.get("roster")||"");return String(r).split(/\n|,/).map(x=>x.trim()).filter(Boolean);}
+function rosterStatus(){
+  const names=rosterNames();const kids=visibleKids();const used=new Set();
+  const key=k=>normName(k.firstName+" "+k.lastName),keyRev=k=>normName(k.lastName+" "+k.firstName);
+  const rows=names.map(n=>{const nn=normName(n);
+    let m=kids.find(k=>!used.has(k.id)&&(key(k)===nn||keyRev(k)===nn));
+    if(!m){const parts=nn.split(" ");m=kids.find(k=>!used.has(k.id)&&parts.length>1&&normName(k.lastName).split(" ").every(w=>parts.includes(w))&&parts.includes(normName(k.firstName).split(" ")[0]));}
+    if(m)used.add(m.id);return {name:n,kid:m||null};});
+  const extra=kids.filter(k=>!used.has(k.id));
+  return {rows,extra};
+}
+function renderRoster(){
+  const names=rosterNames();const view=$("rosterView");
+  if(!names.length){view.innerHTML=`<div class="notice">עוד אין רשימה. לחצו "עריכת הרשימה" והדביקו את שמות הילדים בכיתה, שם בכל שורה.</div>`;$("rosterSummary").textContent="מדביקים את רשימת הילדים בכיתה, ורואים מי עוד לא מילא.";$("copyMissing").hidden=true;return;}
+  const {rows,extra}=rosterStatus();const done=rows.filter(r=>r.kid).length;
+  $("rosterSummary").textContent=`${done} מתוך ${rows.length} ילדים כבר שלחו פרטים · ${rows.length-done} עוד לא`;
+  const todo=rows.filter(r=>!r.kid),ok=rows.filter(r=>r.kid);
+  view.innerHTML=(todo.length?`<h3 style="margin:4px 0 8px;font-size:16px">עוד לא שלחו (${todo.length})</h3><div class="roster-grid">${todo.map(r=>`<div class="roster-item todo"><span class="dot"></span><span>${esc(r.name)}</span></div>`).join("")}</div>`:`<div class="notice ok">כל הילדים ברשימה שלחו פרטים. אפשר להוריד את הגרסה הסופית.</div>`)
+    +(ok.length?`<h3 style="margin:16px 0 8px;font-size:16px">כבר שלחו (${ok.length})</h3><div class="roster-grid">${ok.map(r=>`<div class="roster-item done"><span class="dot"></span><span>${esc(r.name)}</span>${r.kid.photo?"":`<span class="chip warn" style="margin-inline-start:auto">בלי תמונה</span>`}</div>`).join("")}</div>`:"")
+    +(extra.length?`<h3 style="margin:16px 0 8px;font-size:16px">נשלחו אבל לא נמצאו ברשימה (${extra.length})</h3><p class="lead" style="margin:0 0 8px">כנראה השם נכתב אחרת. אפשר לתקן את השם בטבלה או ברשימה.</p><div class="roster-grid">${extra.map(k=>`<div class="roster-item"><span>${esc(k.firstName)} ${esc(k.lastName)}</span></div>`).join("")}</div>`:"");
+  $("copyMissing").hidden=!todo.length;
+}
+$("editRoster").onclick=()=>{$("rosterInput").value=rosterNames().join("\n");$("rosterEdit").hidden=false;$("rosterView").hidden=true;$("rosterInput").focus();};
+$("cancelRoster").onclick=()=>{$("rosterEdit").hidden=true;$("rosterView").hidden=false;};
+$("saveRoster").onclick=async()=>{const st=$("rosterStatus");st.className="status";st.textContent="שומר…";
+  const roster=$("rosterInput").value.split(/\n/).map(x=>x.trim()).filter(Boolean).join("\n");store.set("roster",roster);
+  try{await apiPost({action:"saveConfig",pin:S.pin,cfg:{...S.cfg,roster}});await refresh();
+    if((S.cfg.roster||"")!==roster){S.cfg.roster=undefined;st.innerHTML="הרשימה נשמרה רק במכשיר הזה. כדי שתישמר בגיליון צריך לעדכן את הקוד ב-Apps Script (הוראות ב-README).";st.className="status err";}
+    else{st.textContent="";}
+    $("rosterEdit").hidden=true;$("rosterView").hidden=false;renderRoster();}
+  catch(err){st.textContent=errText(err);st.className="status err";}};
+$("copyMissing").onclick=async()=>{const {rows}=rosterStatus();const t="עוד לא מילאו את הפרטים לדף הקשר:\n"+rows.filter(r=>!r.kid).map(r=>"• "+r.name).join("\n")+"\n\nהלינק למילוי: "+parentURL();
+  try{await navigator.clipboard.writeText(t);$("copyMissing").textContent="הועתק ✓";setTimeout(()=>$("copyMissing").textContent="העתקת שמות שעוד לא שלחו",2000);}catch(_){$("rosterInput").value=t;$("rosterEdit").hidden=false;$("rosterInput").select();}};
+
 /* ---------- admin ---------- */
 let pendingDelete=null;
 function renderAdmin(){
   if(!S.isAdmin)return;
+  if($("rosterEdit").hidden)renderRoster();
   const kids=visibleKids();const withPhoto=kids.filter(k=>k.photo).length;
   $("adminSummary").textContent=`${kids.length} ילדים בלוח · ${kids.length-withPhoto} עדיין בלי תמונה`;
   $("kidRows").innerHTML=kids.map(k=>{const ps=parentsOf(k);const cell=i=>ps[i]?`${esc(ps[i][0])} <span class="tel">${esc(normPhone(ps[i][1]))}</span>`:`<span style="color:var(--muted)">—</span>`;
@@ -439,7 +560,7 @@ function fillSettings(){const c=S.cfg;$("s-class").value=c.classLabel;$("s-heb")
   $("s-tprev").style.backgroundImage=(tPhoto||c.teacherPhoto)?`url('${tPhoto||c.teacherPhoto}')`:"";}
 $("s-tfile").addEventListener("change",async e=>{const f=e.target.files[0];if(!f)return;try{tPhoto=await fitPhoto(f,300,290);$("s-tprev").style.backgroundImage=`url('${tPhoto}')`;$("settingsStatus").textContent="התמונה מוכנה. לחצו שמירה.";}catch(_){$("settingsStatus").textContent="לא הצלחנו לקרוא את הקובץ.";}});
 $("saveSettings").onclick=async()=>{const st=$("settingsStatus");st.className="status";st.textContent="שומר…";
-  const v={classLabel:$("s-class").value.trim()||DEFAULT_CFG.classLabel,hebYear:$("s-heb").value.trim(),year:$("s-year").value.trim(),school:$("s-school").value.trim(),teacherName:$("s-tname").value.trim(),teacherPhone:normPhone($("s-tphone").value),teacherPhoto:tPhoto||S.cfg.teacherPhoto||""};
+  const v={classLabel:$("s-class").value.trim()||DEFAULT_CFG.classLabel,hebYear:$("s-heb").value.trim(),year:$("s-year").value.trim(),school:$("s-school").value.trim(),teacherName:$("s-tname").value.trim(),teacherPhone:normPhone($("s-tphone").value),teacherPhoto:tPhoto||S.cfg.teacherPhoto||"",roster:S.cfg.roster!=null?S.cfg.roster:(store.get("roster")||"")};
   try{await apiPost({action:"saveConfig",pin:S.pin,cfg:v});tPhoto=null;await refresh();st.textContent="נשמר.";st.className="status good";}catch(err){st.textContent=errText(err);st.className="status err";}};
 
 function parentURL(){return location.origin+location.pathname+"#k="+encodeURIComponent(S.code);}

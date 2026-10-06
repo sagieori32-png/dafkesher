@@ -124,8 +124,8 @@ function doPost(e) {
 
     if (b.action === 'saveConfig') {
       const c = b.cfg || {};
-      const keys = ['classLabel','hebYear','year','school','teacherName','teacherPhone','teacherPhoto'];
-      const rows = keys.map(key => [key, key === 'teacherPhoto' ? cleanPhoto(c[key]) : clean(c[key], 120)]);
+      const keys = ['classLabel','hebYear','year','school','teacherName','teacherPhone','teacherPhoto','roster'];
+      const rows = keys.map(key => [key, key === 'teacherPhoto' ? cleanPhoto(c[key]) : key === 'roster' ? clean(c[key], 8000) : clean(c[key], 120)]);
       const csh = SpreadsheetApp.getActive().getSheetByName('config');
       csh.clearContents(); csh.getRange(1, 1, rows.length, 2).setValues(rows);
       return out({ ok: true });
