@@ -198,7 +198,7 @@ textarea.roster-input{font:400 16px var(--f-body);color:var(--ink);background:va
 
 <div class="overlay" id="overlay" hidden><div class="panel" id="overlayPanel"></div></div>
 
-<script src="config.js?v=4"></script>
+<script src="config.js?v=5"></script>
 <script>
 const API=(window.DAF_CONFIG&&window.DAF_CONFIG.apiUrl||"").trim();
 const DEFAULT_CFG={classLabel:"ג 1",hebYear:"תשפ״ז",year:"2026-2027",school:"בית הספר הממלכתי הנריאטה סאלד",teacherName:"אלינור לוי",teacherPhone:"052-8496724",teacherPhoto:""};
@@ -279,12 +279,27 @@ function drawBackdrop(x,H){
   x.restore();
   const v=x.createRadialGradient(W/2,H/2,H*.2,W/2,H/2,W*.75);v.addColorStop(0,"rgba(255,255,255,0)");v.addColorStop(1,"rgba(200,210,222,.35)");x.fillStyle=v;x.fillRect(0,0,W,H);
 }
-function drawKid(x,k,img,cx,top,a){
+const faceCache=new Map();
+const faceDone=new Map();let redrawT=null;
+function faceFor(img,src){if(!img||!src)return Promise.resolve(null);
+  if(!faceCache.has(src))faceCache.set(src,detectFace(img).then(f=>{faceDone.set(src,f);clearTimeout(redrawT);redrawT=setTimeout(()=>{if(S.tab==="board")drawBoard();},300);return f;}));
+  return faceCache.get(src);}
+function drawFocus(x,img,X,Y,w,h,face){
+  if(!face){drawCover(x,img,X,Y,w,h);return;}
+  const IW=img.naturalWidth||img.width,IH=img.naturalHeight||img.height,ar=w/h;
+  let sh=face.height/0.5,sw=sh*ar;
+  const minW=IW*0.42;if(sw<minW){sw=minW;sh=sw/ar;}
+  if(sw>IW){sw=IW;sh=sw/ar;}if(sh>IH){sh=IH;sw=sh*ar;}
+  const fcx=face.x+face.width/2,fcy=face.y+face.height/2;
+  const sx=Math.max(0,Math.min(IW-sw,fcx-sw/2)),sy=Math.max(0,Math.min(IH-sh,fcy-sh*0.46));
+  x.drawImage(img,sx,sy,sw,sh,X,Y,w,h);
+}
+function drawKid(x,k,img,cx,top,a,face){
   const PW=154,PH=184,PX=-PW/2;
   x.save();x.translate(cx,top);x.rotate(a);
   shadow(x,true,12,5);x.fillStyle="#fffefb";x.fillRect(PX,0,PW,PH);shadow(x,false);
   x.strokeStyle="rgba(0,0,0,.06)";x.lineWidth=1;x.strokeRect(PX+.5,.5,PW-1,PH-1);
-  if(img)drawCover(x,img,PX+10,10,PW-20,128);else placeholderSky(x,PX+10,10,PW-20,128);
+  if(img)drawFocus(x,img,PX+10,10,PW-20,128,face);else placeholderSky(x,PX+10,10,PW-20,128);
   x.strokeStyle="rgba(0,0,0,.08)";x.strokeRect(PX+10,10,PW-20,128);
   x.fillStyle=INK;x.direction="rtl";x.textAlign="center";x.textBaseline="middle";
   fitFont(x,k.childName,PW-16,22,'"Secular One",sans-serif');x.fillText(k.childName,0,162);
@@ -310,6 +325,10 @@ async function drawBoard(target){
   const rows=layoutRows(kids.length);const nRows=Math.max(1,rows.length);const H=HEAD+nRows*ROWH+FOOT;
   try{await Promise.all([document.fonts.load('22px "Secular One"'),document.fonts.load('800 15px "Assistant"'),document.fonts.load('600 15px "Assistant"')]);}catch(e){}
   const imgs=await Promise.all(kids.map(k=>loadImg(k.photo)));
+  let faces=kids.map(()=>null);
+  if(S.isAdmin){const ps=kids.map((k,i)=>faceFor(imgs[i],k.photo));
+    if(target)faces=await withTimeout(Promise.all(ps),60000).catch(()=>kids.map(k=>faceDone.get(k.photo)||null)); // final file: wait for every face
+    else faces=kids.map(k=>faceDone.get(k.photo)||null);}                                                         // screen: draw now, redraw as faces arrive
   const [tImg,logo,szold]=await Promise.all([loadImg(cfg.teacherPhoto||IMG_TEACHER),loadImg(IMG_LOGO),loadImg(IMG_SZOLD)]);
   if(tok!==drawToken&&!target)return;
   const cv=target||$("board");cv.width=W*SC;cv.height=H*SC;const x=cv.getContext("2d");x.setTransform(SC,0,0,SC,0,0);x.textBaseline="middle";
@@ -327,7 +346,7 @@ async function drawBoard(target){
   let idx=0;
   rows.forEach((cnt,r)=>{const base=HEAD+30+r*ROWH;drawRope(x,base);
     const rowW=cnt*SLOT,startR=W/2+rowW/2-SLOT/2;
-    for(let i=0;i<cnt;i++,idx++){const cx=startR-i*SLOT,top=ropeY(base,cx)+2,a=ANG[idx%ANG.length]*Math.PI/180;drawKid(x,kids[idx],imgs[idx],cx,top,a);}
+    for(let i=0;i<cnt;i++,idx++){const cx=startR-i*SLOT,top=ropeY(base,cx)+2,a=ANG[idx%ANG.length]*Math.PI/180;drawKid(x,kids[idx],imgs[idx],cx,top,a,faces[idx]);}
   });
   if(!kids.length){drawRope(x,HEAD+30);x.fillStyle="#6b7480";x.direction="rtl";x.textAlign="center";x.font='26px "Secular One",sans-serif';x.fillText("הלוח יתמלא כשההורים ימלאו את הפרטים",W/2,HEAD+170);}
 
